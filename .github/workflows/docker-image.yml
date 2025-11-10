@@ -1,18 +1,136 @@
-name: Docker Image CI
+name: Build and Deploy to Azure Container Apps (Multi-Environment)
 
 on:
   push:
-    branches: [ "master" ]
-  pull_request:
-    branches: [ "master" ]
+    branches: [ "main" ]   # Auto-deploys to production
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Choose deployment environment"
+        required: true
+        default: "dev"
+        type: choice
+        options:
+          - dev
+          - qa
+          - production
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  ACR_NAME: ${{ secrets.AZURE_CONTAINER_REGISTRY }}
+  RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
+  CONTAINERAPPS_ENV: ${{ secrets.AZURE_CONTAINERAPPS_ENV }}
+  IMAGE_NAME: helloworld-node:latest
+  LOCATION: malaysiawest
 
 jobs:
-
+  # ------------------------------------------------------------
+  # 1️⃣ Build image in ACR once, reused across environments
+  # ------------------------------------------------------------
   build:
-
+    name: Build Container Image in ACR
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
-    - name: Build the Docker image
-      run: docker build . --file Dockerfile --tag my-image-name:$(date +%s)
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Build Docker image in Azure Container Registry
+        run: |
+          echo "Building container image in ACR: $ACR_NAME"
+          az acr build \
+            --registry $ACR_NAME \
+            --image $IMAGE_NAME \
+            .
+
+  # ------------------------------------------------------------
+  # 2️⃣ Deploy to DEV
+  # ------------------------------------------------------------
+  deploy-dev:
+    name: Deploy to DEV
+    needs: build
+    if: ${{ github.event.inputs.environment == 'dev' }}
+    environment: dev
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy to DEV Container App
+        run: |
+          az containerapp create \
+            --name helloworld-node-dev \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --environment ${{ env.CONTAINERAPPS_ENV }} \
+            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }} \
+            --target-port 8080 \
+            --ingress external \
+            --registry-server ${{ env.ACR_NAME }}.azurecr.io \
+            --query properties.configuration.ingress.fqdn
+
+  # ------------------------------------------------------------
+  # 3️⃣ Deploy to QA
+  # ------------------------------------------------------------
+  deploy-qa:
+    name: Deploy to QA
+    needs: build
+    if: ${{ github.event.inputs.environment == 'qa' }}
+    environment: qa
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy to QA Container App
+        run: |
+          az containerapp create \
+            --name helloworld-node-qa \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --environment ${{ env.CONTAINERAPPS_ENV }} \
+            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }} \
+            --target-port 8080 \
+            --ingress external \
+            --registry-server ${{ env.ACR_NAME }}.azurecr.io \
+            --query properties.configuration.ingress.fqdn
+
+  # ------------------------------------------------------------
+  # 4️⃣ Deploy to PRODUCTION (auto on push)
+  # ------------------------------------------------------------
+  deploy-prod:
+    name: Deploy to PRODUCTION
+    needs: build
+    if: ${{ github.event_name == 'push' || github.event.inputs.environment == 'production' }}
+    environment: production
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy to PRODUCTION Container App
+        run: |
+          az containerapp create \
+            --name helloworld-node-prod \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --environment ${{ env.CONTAINERAPPS_ENV }} \
+            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }} \
+            --target-port 8080 \
+            --ingress external \
+            --registry-server ${{ env.ACR_NAME }}.azurecr.io \
+            --query properties.configuration.ingress.fqdn
