@@ -1,148 +1,54 @@
-name: Build and Deploy to Azure Container Apps (Multi-Environment)
+name: Build and Push Docker image to Azure Container Registry
 
 on:
   push:
-    branches: [ "main" ]   # Auto-deploys to production
-  workflow_dispatch:
-    inputs:
-      environment:
-        description: "Choose deployment environment"
-        required: true
-        default: "dev"
-        type: choice
-        options:
-          - dev
-          - qa
-          - production
-
-permissions:
-  id-token: write
-  contents: read
+    branches:
+      - master
 
 env:
-  ACR_NAME: ${{ secrets.AZURE_CONTAINER_REGISTRY }}
-  RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
-  CONTAINERAPPS_ENV: ${{ secrets.AZURE_CONTAINERAPPS_ENV }}
+  ACR_NAME: myacrname           # <-- your ACR name (no .azurecr.io)
   IMAGE_NAME: helloworld-node:latest
-  LOCATION: malaysiawest
+  RESOURCE_GROUP: myResourceGroup
+  LOCATION: malaysiawest        # You can keep this for other uses
 
 jobs:
-  # ------------------------------------------------------------
-  # 1️⃣ Build image in ACR once, reused across environments
-  # ------------------------------------------------------------
-  build:
-    name: Build Container Image in ACR
+  build-and-push:
     runs-on: ubuntu-latest
 
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Azure Login
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          auth-type: SERVICE_PRINCIPAL
-
-      - name: Build Docker image in Azure Container Registry
-        run: |
-          echo "Building container image in ACR: $ACR_NAME"
-          az acr build \
-            --registry $ACR_NAME \
-            --image $IMAGE_NAME \
-            .
-
-  # ------------------------------------------------------------
-  # 2️⃣ Deploy to DEV
-  # ------------------------------------------------------------
-  deploy-dev:
-    name: Deploy to DEV
-    needs: build
-    if: ${{ github.event.inputs.environment == 'dev' }}
-    environment: dev
-    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
 
     steps:
-      - name: Azure Login
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          auth-type: SERVICE_PRINCIPAL
+    # 1️⃣ Checkout code
+    - name: Checkout code
+      uses: actions/checkout@v4
 
-      - name: Deploy to DEV Container App
-        run: |
-          az containerapp create \
-            --name helloworld-node-dev \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --environment ${{ env.CONTAINERAPPS_ENV }} \
-            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }} \
-            --target-port 8080 \
-            --ingress external \
-            --registry-server ${{ env.ACR_NAME }}.azurecr.io \
-            --query properties.configuration.ingress.fqdn
+    # 2️⃣ Login to Azure with OIDC (secure and secretless)
+    - name: Log in to Azure using OIDC
+      uses: azure/login@v2
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        auth-type: SERVICE_PRINCIPAL
 
-  # ------------------------------------------------------------
-  # 3️⃣ Deploy to QA
-  # ------------------------------------------------------------
-  deploy-qa:
-    name: Deploy to QA
-    needs: build
-    if: ${{ github.event.inputs.environment == 'qa' }}
-    environment: qa
-    runs-on: ubuntu-latest
+    # 3️⃣ Log in to Azure Container Registry
+    - name: Log in to Azure Container Registry
+      run: |
+        az acr login --name $ACR_NAME
 
-    steps:
-      - name: Azure Login
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          auth-type: SERVICE_PRINCIPAL
+    # 4️⃣ Build Docker image locally
+    - name: Build Docker image
+      run: |
+        docker build . -t $ACR_NAME.azurecr.io/$IMAGE_NAME
 
-      - name: Deploy to QA Container App
-        run: |
-          az containerapp create \
-            --name helloworld-node-qa \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --environment ${{ env.CONTAINERAPPS_ENV }} \
-            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }} \
-            --target-port 8080 \
-            --ingress external \
-            --registry-server ${{ env.ACR_NAME }}.azurecr.io \
-            --query properties.configuration.ingress.fqdn
+    # 5️⃣ Push image to ACR
+    - name: Push Docker image
+      run: |
+        docker push $ACR_NAME.azurecr.io/$IMAGE_NAME
 
-  # ------------------------------------------------------------
-  # 4️⃣ Deploy to PRODUCTION (auto on push)
-  # ------------------------------------------------------------
-  deploy-prod:
-    name: Deploy to PRODUCTION
-    needs: build
-    if: ${{ github.event_name == 'push' || github.event.inputs.environment == 'production' }}
-    environment: production
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Azure Login
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          auth-type: SERVICE_PRINCIPAL
-
-      - name: Deploy to PRODUCTION Container App
-        run: |
-          az containerapp create \
-            --name helloworld-node-prod \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --environment ${{ env.CONTAINERAPPS_ENV }} \
-            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }} \
-            --target-port 8080 \
-            --ingress external \
-            --registry-server ${{ env.ACR_NAME }}.azurecr.io \
-            --query properties.configuration.ingress.fqdn
+    # ✅ (Optional) Verify image in ACR
+    - name: Verify pushed image
+      run: |
+        az acr repository show-tags --name $ACR_NAME --repository $(echo $IMAGE_NAME | cut -d: -f1)
