@@ -1,4 +1,4 @@
-name: Build and Push Docker image to Azure Container Registry
+name: Build, Push, and Deploy to Azure Container Apps
 
 on:
   push:
@@ -6,17 +6,19 @@ on:
       - master
 
 env:
-  ACR_NAME: testhelloworld           # <-- your ACR name (no .azurecr.io)
-  IMAGE_NAME: helloworld-node:latest
-  RESOURCE_GROUP: myResourceGroup
-  LOCATION: malaysiawest        # You can keep this for other uses
+  ACR_NAME: ${{ secrets.AZURE_CONTAINER_REGISTRY }}            # <-- your ACR name (no .azurecr.io)
+  IMAGE_NAME: helloworld-node:latest  # <-- image tag
+  RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}     # <-- your RG
+  CONTAINERAPPS_ENV: helloworld-app-env   # <-- your Container Apps environment name
+  CONTAINERAPP_NAME: helloworld-app   # <-- your Container App name
+  LOCATION: malaysiawest              # <-- location of your resources
 
 jobs:
-  build-and-push:
+  build-push-deploy:
     runs-on: ubuntu-latest
 
     permissions:
-      id-token: write
+      id-token: write   # Required for OIDC login
       contents: read
 
     steps:
@@ -24,8 +26,8 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    # 2️⃣ Login to Azure with OIDC (secure and secretless)
-    - name: Log in to Azure using OIDC
+    # 2️⃣ Login to Azure using OIDC (secure, no client secret)
+    - name: Log in to Azure
       uses: azure/login@v2
       with:
         client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -34,21 +36,31 @@ jobs:
         auth-type: SERVICE_PRINCIPAL
 
     # 3️⃣ Log in to Azure Container Registry
-    - name: Log in to Azure Container Registry
-      run: |
-        az acr login --name $ACR_NAME
+    - name: Log in to ACR
+      run: az acr login --name $ACR_NAME
 
-    # 4️⃣ Build Docker image locally
+    # 4️⃣ Build Docker image locally on the GitHub runner
     - name: Build Docker image
-      run: |
-        docker build . -t $ACR_NAME.azurecr.io/$IMAGE_NAME
+      run: docker build . -t $ACR_NAME.azurecr.io/$IMAGE_NAME
 
-    # 5️⃣ Push image to ACR
+    # 5️⃣ Push Docker image to ACR
     - name: Push Docker image
-      run: |
-        docker push $ACR_NAME.azurecr.io/$IMAGE_NAME
+      run: docker push $ACR_NAME.azurecr.io/$IMAGE_NAME
 
-    # ✅ (Optional) Verify image in ACR
-    - name: Verify pushed image
+    # 6️⃣ Deploy new image to Azure Container App
+    - name: Deploy to Azure Container App
       run: |
-        az acr repository show-tags --name $ACR_NAME --repository $(echo $IMAGE_NAME | cut -d: -f1)
+        az containerapp update \
+          --name $CONTAINERAPP_NAME \
+          --resource-group $RESOURCE_GROUP \
+          --image $ACR_NAME.azurecr.io/$IMAGE_NAME \
+          --output table
+
+    # ✅ 7️⃣ Verify deployment
+    - name: Verify container app revision
+      run: |
+        az containerapp revision list \
+          --name $CONTAINERAPP_NAME \
+          --resource-group $RESOURCE_GROUP \
+          --query "[?active==\`true\`].{Revision:name,Image:containers[0].image}" \
+          --output table
