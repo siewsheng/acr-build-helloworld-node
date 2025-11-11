@@ -6,7 +6,7 @@ on:
       - master
 
 env:
-  ACR_NAME: myacrname           # <-- your ACR name (no .azurecr.io)
+  ACR_NAME: testhelloworld           # <-- your ACR name (no .azurecr.io)
   IMAGE_NAME: helloworld-node:latest
   RESOURCE_GROUP: myResourceGroup
   LOCATION: malaysiawest        # You can keep this for other uses
