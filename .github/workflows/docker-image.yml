@@ -37,5 +37,4 @@ jobs:
         client-id: $AZURE_CLIENT_ID
         tenant-id: $AZURE_TENANT_ID
         subscription-id: $AZURE_SUBSCRIPTION_ID
-        auth-type: SERVICE_PRINCIPAL
-
+        enable-oidc: true
