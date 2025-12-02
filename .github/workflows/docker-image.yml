@@ -6,13 +6,17 @@ on:
       - master
 
 env:
-  ACR_NAME: ${{ secrets.AZURE_CONTAINER_REGISTRY }}            # <-- your ACR name (no .azurecr.io)
+  ACR_NAME: QuartoLiteTest            # <-- your ACR name (no .azurecr.io)
   IMAGE_NAME: helloworld-node:latest  # <-- image tag
-  RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}     # <-- your RG
+  RESOURCE_GROUP: QuartoLite     # <-- your RG
   CONTAINERAPPS_ENV: helloworld-app-env   # <-- your Container Apps environment name
   CONTAINERAPP_NAME: helloworld-app   # <-- your Container App name
   LOCATION: malaysiawest              # <-- location of your resources
+  AZURE_SUBSCRIPTION_ID: 90d12bc2-e05e-43bd-9943-ca14673612c4      
+  AZURE_CLIENT_ID: 9a290e26-fef9-4e78-9691-5aeacfde57d9     
+  AZURE_TENANT_ID: 024633c0-99cb-4f14-9a2f-55de40951d4d
 
+      
 jobs:
   build-push-deploy:
     runs-on: ubuntu-latest
@@ -30,37 +34,8 @@ jobs:
     - name: Log in to Azure
       uses: azure/login@v2
       with:
-        client-id: ${{ secrets.AZURE_CLIENT_ID }}
-        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        client-id: $AZURE_CLIENT_ID
+        tenant-id: $AZURE_TENANT_ID
+        subscription-id: $AZURE_SUBSCRIPTION_ID
         auth-type: SERVICE_PRINCIPAL
 
-    # 3️⃣ Log in to Azure Container Registry
-    - name: Log in to ACR
-      run: az acr login --name $ACR_NAME
-
-    # 4️⃣ Build Docker image locally on the GitHub runner
-    - name: Build Docker image
-      run: docker build . -t $ACR_NAME.azurecr.io/$IMAGE_NAME
-
-    # 5️⃣ Push Docker image to ACR
-    - name: Push Docker image
-      run: docker push $ACR_NAME.azurecr.io/$IMAGE_NAME
-
-    # 6️⃣ Deploy new image to Azure Container App
-    - name: Deploy to Azure Container App
-      run: |
-        az containerapp update \
-          --name $CONTAINERAPP_NAME \
-          --resource-group $RESOURCE_GROUP \
-          --image $ACR_NAME.azurecr.io/$IMAGE_NAME \
-          --output table
-
-    # ✅ 7️⃣ Verify deployment
-    - name: Verify container app revision
-      run: |
-        az containerapp revision list \
-          --name $CONTAINERAPP_NAME \
-          --resource-group $RESOURCE_GROUP \
-          --query "[?active==\`true\`].{Revision:name,Image:containers[0].image}" \
-          --output table
